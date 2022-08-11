@@ -30,7 +30,7 @@ async def send_about(message: types.Message):
     await AboutPipeline.next_step.set()
 
 @dp.callback_query_handler(text="button_next_pressed", state=AboutPipeline.next_step)
-async def button_pressed(call: types.CallbackQuery, state: FSMContext):
+async def next_pressed(call: types.CallbackQuery, state: FSMContext):
     async with state.proxy() as data:
         try:
             pipeline_index = data['iterator']
@@ -47,6 +47,10 @@ async def button_pressed(call: types.CallbackQuery, state: FSMContext):
             await call.message.answer("Пайплайн пройден!")
             await state.finish()
 
+@dp.callback_query_handler(text="button_cancel_pressed", state=AboutPipeline.next_step)
+async def cancel_pressed(call: types.CallbackQuery, state=FSMContext):
+    await call.message.reply(text="you pressed cancel")
+    await state.finish()
 
 if __name__ == '__main__':
     executor.start_polling(dp)
