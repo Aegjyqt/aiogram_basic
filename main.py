@@ -19,6 +19,16 @@ bot = Bot(
 dp = Dispatcher(bot=bot, storage=MemoryStorage())
 
 
+async def del_temp_msgs(msg_list: set, message: types.Message) -> None:
+    elements_to_remove = set()
+    for element in msg_list:
+        try:
+            await bot.delete_message(message_id=element, chat_id=message.from_user.id)
+            elements_to_remove.add(element)
+        except KeyError:
+            pass
+    msg_list -= elements_to_remove
+
 class ProfilePipeline(StatesGroup):
     init_state = State()
     name_state = State()
@@ -60,7 +70,7 @@ async def next_pressed(call: types.CallbackQuery, state: FSMContext) -> None:
             await state.finish()
 
 
-@dp.callback_query_handler(text="button_cancel_pressed", state=AboutPipeline.next_step)
+@dp.callback_query_handler(text="button_cancel_pressed", state='*')
 async def cancel_pressed(call: types.CallbackQuery, state=FSMContext) -> None:
     await call.message.reply(text="you pressed cancel")
     await call.message.delete_reply_markup()
@@ -79,57 +89,61 @@ async def profile_pipeline_next_pressed(call: types. CallbackQuery, state=FSMCon
         profile_init_msg_id = (await bot.send_photo(photo=InputFile("photo_placeholder.jpg"), chat_id=call.from_user.id,
                                                     caption=messages.get_caption())).message_id
         data['profile_init_msg_id'] = profile_init_msg_id
-        profile_init_msg2_id = (await bot.send_message(text="Enter your name:", chat_id=call.from_user.id)).message_id
-        data['profile_init_msg2_id'] = profile_init_msg2_id
+
+        profile_temp_msg_id = (await bot.send_message(text="Enter your name:", chat_id=call.from_user.id)).message_id
+        data['temp_msgs'] = set()  # я могу как-то явно указать на то, что это список прямо в след. строке?
+        data['temp_msgs'].add(profile_temp_msg_id)
+
     await state.set_state(ProfilePipeline.name_state)
-
-
-@dp.callback_query_handler(text="button_cancel_pressed", state=ProfilePipeline.init_state)
-async def cancel_pressed(call: types.CallbackQuery, state=FSMContext) -> None:
-    await call.message.reply(text="you pressed cancel")
-    await call.message.delete_reply_markup()
-    await state.finish()
 
 
 @dp.message_handler(state=ProfilePipeline.name_state)
 async def name_state_process(message: types.Message, state: FSMContext) -> None:
     async with state.proxy() as data:
-        await bot.delete_message(message_id=data['profile_init_msg2_id'], chat_id=message.from_user.id)
-        await bot.delete_message(message_id=message.message_id, chat_id=message.chat.id)
+        data['temp_msgs'].add(message.message_id)
+        await del_temp_msgs(msg_list=data['temp_msgs'], message=message)
+
         data['name'] = message.text
         await message.bot.edit_message_caption(chat_id=message.from_user.id,
                                                message_id=data['profile_init_msg_id'],
                                                caption=messages.get_caption(name=data['name']))
+
         profile_name_msg_id = (await message.answer(text='Enter your age:')).message_id
-        data['profile_name_msg_id'] = profile_name_msg_id
+        data['temp_msgs'].add(profile_name_msg_id)
+
     await state.set_state(ProfilePipeline.age_state)
 
 
 @dp.message_handler(state=ProfilePipeline.age_state)
 async def age_state_process(message: types.Message, state: FSMContext) -> None:
-    entered_age = message.text
-    try:
-        entered_age = int(entered_age)
-    except ValueError:
-        await message.reply("Incorrect input. Enter your age")
-        return
     async with state.proxy() as data:
-        await bot.delete_message(message_id=data['profile_name_msg_id'], chat_id=message.from_user.id)
-        await bot.delete_message(message_id=message.message_id, chat_id=message.chat.id)
+        data['temp_msgs'].add(message.message_id)
+        entered_age = message.text
+        try:
+            entered_age = int(entered_age)
+        except ValueError:
+            temp_msg_id = (await message.reply("Incorrect input. Enter your age")).message_id
+            data['temp_msgs'].add(temp_msg_id)
+            return
+
         data['age'] = message.text
+        await del_temp_msgs(msg_list=data['temp_msgs'], message=message)
+
         await message.bot.edit_message_caption(chat_id=message.from_user.id,
                                                message_id=data['profile_init_msg_id'],
                                                caption=messages.get_caption(name=data['name'], age=data['age']))
         profile_age_msg_id = (await message.answer(text='Send photo:')).message_id
-        data['profile_age_msg_id'] = profile_age_msg_id
+        data['temp_msgs'].add(profile_age_msg_id)
     await state.set_state(ProfilePipeline.photo_state)
 
 
 @dp.message_handler(state=ProfilePipeline.photo_state, content_types='photo')
 async def photo_state_process(message: types.Message, state: FSMContext) -> None:
     async with state.proxy() as data:
-        await bot.delete_message(message_id=data['profile_age_msg_id'], chat_id=message.from_user.id)
-        await bot.delete_message(message_id=message.message_id, chat_id=message.chat.id)
+
+        data['temp_msgs'].add(message.message_id)
+        await del_temp_msgs(msg_list=data['temp_msgs'], message=message)
+
         sent_photo_id = message.photo[-1].file_id
         await message.bot.edit_message_media(chat_id=message.chat.id,
                                              message_id=data['profile_init_msg_id'],
